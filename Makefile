@@ -1,7 +1,7 @@
 CFLAGS = -Wall -Wextra -Wpedantic -g3 -std=c23
 
-SRC = $(wildcard *.c)
-HDR = $(wildcard *.h)
+SRC = $(wildcard src/*.c)
+HDR = $(wildcard src/*.h)
 
 .PHONY: all clean
 

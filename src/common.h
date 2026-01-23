@@ -27,3 +27,10 @@
 #define unused(x)	(void)(x)
 
 #define STREQ(s, t)	(!strcmp((s), (t)))
+
+#define ERROR_MAX	4096
+
+typedef char *error_t;
+
+error_t error_new(const char *fmt, ...);
+error_t error_from_errno(const char *msg);

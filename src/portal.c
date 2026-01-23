@@ -88,19 +88,25 @@ int main(void) {
 		case CMD_HOST: {
 			server = server_host();
 
-			if (server.err)
-				warn("unable to host server: %s", server.err);
+			if (!server.err) {
+				client.status = CLIENT_HOSTING;
+				break;
+			}
 
-			client.status = CLIENT_HOSTING;
+			server_terminate(&server);
+
+			warn("unable to host server: %s", server.err);
 		} break;
 
 		case CMD_CONN: {
 			server = server_connect();
 
-			if (server.err)
-				warn("unable to host server: %s", server.err);
+			if (!server.err) {
+				client.status = CLIENT_CONNECTED;
+				break;
+			}
 
-			client.status = CLIENT_CONNECTED;
+			warn("unable to host server: %s", server.err);
 		} break;
 
 		// skip '\'
