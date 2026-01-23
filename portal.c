@@ -1,78 +1,66 @@
+#include "common.h"
+#include "server.h"
+#include <time.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-
-#define BOLD	"\033[1m"
-#define GREEN	"\033[38;2;0;255;0m"
-#define RESET	"\033[0m"
-
-#define errno_string	strerror(errno)
-
-#define info(fmt, ...)	\
-	do { printf(BOLD GREEN fmt RESET __VA_OPT__(,)__VA_ARGS__ ); } while (0)
-#define warn(fmt, ...)	\
-	do { fprintf(stderr, fmt __VA_OPT__(,)__VA_ARGS__); fputc('\n', stderr); } while (0)
-#define die(fmt, ...)	\
-	do { warn(fmt __VA_OPT__(,)__VA_ARGS__); exit(1); } while (0)
-
-#define STREQ(s, t)	(!strcmp((s), (t)))
-
-
 typedef enum {
-	CMD_IDLE,
+	CMD_UNKNOWN,
 	CMD_QUIT,
 	CMD_HOST,
 	CMD_CONN,
 } cmd_t;
 
-static inline bool is_command(const char *input) {
-	return input[0] == '\\';
+cmd_t run_command(const char *cmd);
+
+
+void send_chat(const int user_id, const char *input) {
+	printf("[user%d]: %s\n", user_id, input);
 }
 
-static cmd_t run_command(const char *cmd) {
-	// skip '\'
-	cmd++;
+static inline bool is_command(const char *input, const size_t len) {
+	if (len <= 1)
+		return false;
 
-	if (STREQ(cmd, "host")) {
-		printf("hosting...\n");
-		return CMD_HOST;
-	}
-
-	if (STREQ(cmd, "connect")) {
-		printf("connecting...\n");
-		return CMD_CONN;
-	}
-
-	if (STREQ(cmd, "quit")) {
-		printf("later\n");
-		return CMD_CONN;
-	}
-
-	printf("unknown command: %s\n", cmd);
-	return CMD_IDLE;
+	return input[0] == '\\' && input[1] != '\\';
 }
 
 static inline void print_prompt(void) {
-	printf("]>");
+	printf("]> ");
 	fflush(stdout);
 }
 
-static void assert_tty(void) {
+void assert_tty(void) {
 	if (!isatty(STDIN_FILENO))
 		die("stdin is not a tty. exiting...");
 	if (!isatty(STDOUT_FILENO))
 		die("stdout is not a tty. exiting...");
 }
 
+typedef enum {
+	CLIENT_IDLE,
+	CLIENT_HOSTING,
+	CLIENT_CONNECTED,
+} client_status_t;
+
+typedef struct {
+	int user_id;
+	client_status_t status;
+} client_t;
+
+client_t client_new(void);
+void client_cleanup(const client_t *client, server_t *s);
+
 #define INPUT_MAX	4096
 
 int main(void) {
 	assert_tty();
 
-	char input[INPUT_MAX];
+	server_t server;
+	client_t client = client_new();
 
+	char input[INPUT_MAX];
 	for (;;) {
 		print_prompt();
 
@@ -81,13 +69,81 @@ int main(void) {
 			break;
 		}
 		const size_t input_len = strcspn(input, "\n");
-		input[input_len] = '\0';
-
 		if (!input_len)
 			continue;
 
-		if (is_command(input)) {
-			run_command(input);
+		input[input_len] = '\0';
+
+		if (!is_command(input, input_len)) {
+			send_chat(client.user_id, input);
+			continue;
+		}
+
+		const cmd_t cmd = run_command(input);
+
+		if (cmd == CMD_QUIT)
+			break;
+		
+		switch (cmd) {
+		case CMD_HOST: {
+			server = server_host();
+
+			if (server.err)
+				warn("unable to host server: %s", server.err);
+
+			client.status = CLIENT_HOSTING;
+		} break;
+
+		case CMD_CONN: {
+			server = server_connect();
+
+			if (server.err)
+				warn("unable to host server: %s", server.err);
+
+			client.status = CLIENT_CONNECTED;
+		} break;
+
+		// skip '\'
+		case CMD_UNKNOWN: {
+			warn("unknown command: '%s'\n", input + 1); break;
+		} break;
+
+		default: unreachable("main: command");
 		}
 	}
+
+	client_cleanup(&client, &server);
+
+	printf("later\n");
 }
+
+client_t client_new(void) {
+	return (client_t) {
+		.user_id = time(NULL),
+		.status = CLIENT_IDLE,
+	};
+}
+
+void client_cleanup(const client_t *client, server_t *s) {
+	switch (client->status) {
+	case CLIENT_HOSTING:	server_terminate(s); break;
+	case CLIENT_CONNECTED:	server_disconnect(s); break;
+
+	default:		break;
+	}
+}
+
+cmd_t run_command(const char *cmd) {
+	// skip '\'
+	cmd++;
+
+	if (STREQ(cmd, "host"))
+		return CMD_HOST;
+	if (STREQ(cmd, "connect"))
+		return CMD_CONN;
+	if (STREQ(cmd, "quit"))
+		return CMD_QUIT;
+
+	return CMD_UNKNOWN;
+}
+
