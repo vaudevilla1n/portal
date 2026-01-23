@@ -4,14 +4,20 @@
 #include "internal_server.h"
 #include <unistd.h>
 #include <signal.h>
+#include <sys/wait.h>
 
 static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 	unused(ctx);
 
 	switch (sig) {
-	case SIGCHLD: {
+	case SERVER_SIGNOTIFY: {
+		char *msg = siginfo->si_value.sival_ptr;
+		info("\ninternal server: %s", msg);
+	} break;
+
+	case SERVER_SIGERR: {
 		error_t err = siginfo->si_value.sival_ptr;
-		warn("internal server error: %s", err);
+		warn("\ninternal server: error: %s", err);
 	} break;
 
 	default: break;
@@ -22,17 +28,20 @@ static int set_signals(void) {
 	struct sigaction act;
 
 	sigemptyset(&act.sa_mask);
-	sigaddset(&act.sa_mask, SIGCHLD);
 
 	act.sa_sigaction = signal_handler;
 
-	if (sigaction(SIGINT, &act, nullptr))
+	if (sigaction(SIGCHLD, &act, nullptr))
+		return 1;
+	if (sigaction(SERVER_SIGNOTIFY, &act, nullptr))
+		return 1;
+	if (sigaction(SERVER_SIGERR, &act, nullptr))
 		return 1;
 	
 	return 0;
 }
 
-void kill_server(const pid_t server_pid) {
+static void kill_server(const pid_t server_pid) {
 	kill(server_pid, SIGKILL);
 }
 
@@ -62,7 +71,6 @@ server_t server_host(void) {
 	internal_server_main_loop();
 
 	unreachable("server_host");
-	return (server_t){ 0 };
 }
 
 server_t server_connect(void) {
@@ -76,7 +84,13 @@ void server_disconnect(const server_t *server) {
 }
 
 void server_terminate(const server_t *server) {
+	if (!server->pid) {
+		warn("no server running");
+		return;
+	}
+
 	info("terminating...");
 
 	kill(server->pid, SIGINT);
+	waitpid(server->pid, NULL, 0);
 }

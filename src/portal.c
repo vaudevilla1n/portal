@@ -10,6 +10,7 @@ typedef enum {
 	CMD_QUIT,
 	CMD_HOST,
 	CMD_CONN,
+	CMD_TERM,
 } cmd_t;
 
 cmd_t run_command(const char *cmd);
@@ -57,7 +58,7 @@ void client_cleanup(const client_t *client, server_t *s);
 int main(void) {
 	assert_tty();
 
-	server_t server;
+	server_t server = { 0 };
 	client_t client = client_new();
 
 	char input[INPUT_MAX];
@@ -109,6 +110,8 @@ int main(void) {
 			warn("unable to host server: %s", server.err);
 		} break;
 
+		case CMD_TERM:	server_terminate(&server); break;
+
 		// skip '\'
 		case CMD_UNKNOWN: {
 			warn("unknown command: '%s'\n", input + 1); break;
@@ -149,6 +152,8 @@ cmd_t run_command(const char *cmd) {
 		return CMD_CONN;
 	if (STREQ(cmd, "quit"))
 		return CMD_QUIT;
+	if (STREQ(cmd, "terminate"))
+		return CMD_TERM;
 
 	return CMD_UNKNOWN;
 }

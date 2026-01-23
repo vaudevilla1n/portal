@@ -1,12 +1,12 @@
 #pragma once
+
 #include "common.h"
+#include "server_signals.h"
 #include <sys/types.h>
 
 /*
 	thats all folks
 */
-
-#define SERVER_SIGNOTIFY	SIGCHLD
 
 typedef struct {
 	pid_t pid;

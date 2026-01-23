@@ -1,0 +1,5 @@
+#pragma once
+
+#define SERVER_SIGNOTIFY	SIGUSR1
+#define SERVER_SIGERR		SIGUSR2
+

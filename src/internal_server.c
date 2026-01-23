@@ -17,13 +17,17 @@
 pid_t main_program_pid;
 internal_server_t main_internal_server;
 
-[[noreturn]] void internal_error(error_t err) {
+static void send_signal(const int sig, char *msg) {
 	union sigval val = {
-		.sival_ptr = err,
+		.sival_ptr = msg,
 	};
 
-	sigqueue(main_program_pid, SERVER_SIGNOTIFY, val);
-	exit(1);
+	sigqueue(main_program_pid, sig, val);
+}
+
+[[noreturn]] void internal_error(error_t err) {
+	send_signal(SERVER_SIGERR, err);
+	_exit(1);
 }
 
 void cleanup(void) {
@@ -44,7 +48,7 @@ void cleanup(void) {
 
 [[noreturn]] void exit_server(void) {
 	cleanup();
-	exit(0);
+	_exit(0);
 }
 
 static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
@@ -52,7 +56,7 @@ static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 	unused(ctx);
 
 	switch (sig) {
-	case SIGINT:	exit_server();
+	case SIGINT: exit_server(); break;
 
 	default: break;
 	}
