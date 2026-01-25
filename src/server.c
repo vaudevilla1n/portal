@@ -7,22 +7,24 @@
 #include <signal.h>
 #include <sys/wait.h>
 
+server_t main_server;
+
 static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 	unused(ctx);
 
 	switch (sig) {
 	case SIGCHLD: {
-		tui_info("internal server exited");
+		main_server.running = false;
 	} break;
 
 	case SERVER_SIGNOTIFY: {
-		char *msg = siginfo->si_value.sival_ptr;
-		tui_info(msg);
+		char *notif = siginfo->si_value.sival_ptr;
+		main_server.notif = notif;
 	} break;
 
 	case SERVER_SIGERR: {
 		char *err = siginfo->si_value.sival_ptr;
-		tui_warn(err);
+		main_server.err = err;
 	} break;
 
 	default: break;
@@ -49,75 +51,67 @@ static int set_signals(void) {
 }
 
 
-server_t server_init(void) {
-	server_t server = { 0 };
+void server_init(void) {
+	main_server.running = true;
 
-	if (set_signals()) {
-		server.err = "unable to set handler for main process signals";
-		return server;
-	}
+	die_if(set_signals(), "unable to set handler for main process signals: %s", errno_string);
 
-	server.pid = fork();
-	if (server.pid == -1) {
-		 server.err = "unable to spawn server process";
-		 return server;
-	}
+	main_server.pid = fork();
+	die_if(main_server.pid == -1, "unable to spawn server process: %s", errno_string);
 
-	if (server.pid)
-		return server;
+	if (main_server.pid)
+		return;
 
 	internal_server_init();
 	internal_server_main_loop();
-
-	__unreachable("server_init");
 }
 
-static void internal_server_action(server_t *server, const server_act_t act) {
+static void internal_server_action(const server_status_t status) {
 	union sigval val = {
-		.sival_int = act,
+		.sival_int = status,
 	};
 
-	if (sigqueue(server->pid, SERVER_SIGNOTIFY, val))
-		server->err = "unable to signal internal server";
+	if (sigqueue(main_server.pid, SERVER_SIGNOTIFY, val))
+		main_server.err = "unable to signal internal server";
 }
 
 // should be called deinit but terminate sounds cooler
-void server_terminate(server_t *server) {
-	if (!server->pid) {
+void server_terminate(void) {
+	if (main_server.pid <= 0) {
 		tui_warn("no server running");
 		return;
 	}
 
 	tui_info("terminating server...");
-	internal_server_action(server, SERVER_QUIT);
+	internal_server_action(SERVER_QUIT);
 
-	waitpid(server->pid, nullptr, 0);
+	waitpid(main_server.pid, nullptr, 0);
 }
 
-void server_host(server_t *server) {
+void server_host(void) {
 	tui_info("hosting...");
 
-	internal_server_action(server, SERVER_HOST);
+	internal_server_action(SERVER_HOST);
 
-	if (server->err)
+	if (main_server.err)
 		tui_warn("unable to host server");
 }
 
-void server_unhost(server_t *server) {
+void server_unhost(void) {
 	tui_info("unhosting...");
-	internal_server_action(server, SERVER_UNHOST);
+	internal_server_action(SERVER_UNHOST);
 }
 
-void server_connect(server_t *server) {
+void server_connect(void) {
 	tui_info("connecting...");
 
-	internal_server_action(server, SERVER_CONNECT);
+	internal_server_action(SERVER_CONNECT);
 
-	if (server->err)
+	if (main_server.err)
 		tui_warn("unable to connect to server");
 }
 
-void server_disconnect(server_t *server) {
+void server_disconnect(void) {
 	tui_info("disconnecting...");
-	internal_server_action(server, SERVER_DISCONNECT);
+	internal_server_action(SERVER_DISCONNECT);
 }

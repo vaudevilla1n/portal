@@ -11,5 +11,4 @@ typedef enum {
 
 	SERVER_CONNECT,
 	SERVER_DISCONNECT,
-} server_act_t;
-
+} server_status_t;

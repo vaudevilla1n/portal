@@ -10,12 +10,12 @@
 #define DEFAULT_BACKLOG	16
 
 typedef struct {
-	int sock;
 	struct sockaddr_in addr;
-
-	time_t start_time;
+	int sock;
 
 	bool running;
+	time_t start_time;
+	server_status_t status;
 } internal_server_t;
 
 void internal_server_init(void);

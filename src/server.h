@@ -9,15 +9,21 @@
 */
 
 typedef struct {
+	bool running;
+
 	pid_t pid;
+
 	char *err;
+	char *notif;
 } server_t;
 
-server_t server_init(void);
-void server_terminate(server_t *server);
+extern server_t main_server;
 
-void server_host(server_t *server);
-void server_unhost(server_t *server);
+void server_init(void);
+void server_terminate(void);
 
-void server_connect(server_t *server);
-void server_disconnect(server_t *server);
+void server_host(void);
+void server_unhost(void);
+
+void server_connect(void);
+void server_disconnect(void);

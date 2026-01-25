@@ -94,11 +94,6 @@ static void host_server(void) {
 }
 
 
-/*
-	TODO
-
-	complete the rest of the server actions
-*/
 static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 	unused(ctx);
 
@@ -106,18 +101,11 @@ static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 	case SIGINT:			exit_server(); break;
 
 	case SERVER_SIGNOTIFY: {
-		const server_act_t act = siginfo->si_value.sival_int;
+		const server_status_t status = siginfo->si_value.sival_int;
+		main_internal_server.status = status;
 
-		switch (act) {
-		case SERVER_QUIT:	exit_server(); break;
-
-		case SERVER_HOST:	host_server(); break;
-		case SERVER_UNHOST: 	return;
-
-		case SERVER_CONNECT: 	return;
-		case SERVER_DISCONNECT:	return;
-
-		}
+		if (status == SERVER_QUIT)
+			exit_server();
 	} break;
 
 	default: break;
@@ -167,8 +155,22 @@ static void wait_for_signal(void) {
 }
 
 void internal_server_main_loop(void) {
-	for (;;)
+	for (;;) {
 		wait_for_signal();
-	
-	exit_server();
+
+		/*
+			TODO
+
+			complete the rest of the server actions
+		*/
+		switch (main_internal_server.status) {
+		case SERVER_HOST:	host_server(); break;
+		case SERVER_UNHOST: 	return;
+
+		case SERVER_CONNECT: 	return;
+		case SERVER_DISCONNECT:	return;
+
+		default:	__unreachable("internal_server_main_loop");
+		}
+	}
 }

@@ -38,10 +38,17 @@ static void send_chat(const int user_id, const char *input) {
 	tui_push_line(line);
 }
 
+/*
+	TODO
+	block and queue signals
+	they fuck up stdio
+*/
+
 int main(void) {
-	server_t server = server_init();
-	if (server.err)
-		die("unable to initialize portal server: %s", server.err);
+	server_init();
+
+	if (main_server.err)
+		die("unable to initialize portal server: %s", main_server.err);
 
 	client_t client = client_new();
 
@@ -49,18 +56,35 @@ int main(void) {
 
 	char input[4096];
 	for (;;) {
+		if (main_server.notif) {
+			tui_info(main_server.notif);
+			main_server.notif = nullptr;
+		}
+
+		if (main_server.err) {
+			tui_warn(main_server.err);
+			main_server.err = nullptr;
+		}
+
+		if (!main_server.running) {
+			tui_info("internal server exited");
+			break;
+		}
+
 		/*
 		size_t input_len;
 		const char *input = tui_read_line(&input_len);
 		*/
 
-		if (!fgets(input, sizeof(input), stdin)) {
+		ssize_t input_len = read(STDIN_FILENO, input, lengthof(input));
+
+		if (input_len <= 0) {
 			printf("\n");
 			break;
 		}
 
-		const size_t input_len = strcspn(input, "\n");
-		input[input_len] = '\0';
+		if (input[input_len - 1] == '\n')
+			input[--input_len] = '\0';
 
 		if (!input_len)
 			continue;
@@ -76,9 +100,9 @@ int main(void) {
 			break;
 		
 		switch (cmd) {
-		case CMD_HOST: server_host(&server); break;
+		case CMD_HOST: server_host(); break;
 
-		case CMD_CONN: server_connect(&server); break;
+		case CMD_CONN: server_connect(); break;
 
 		// skip '\'
 		case CMD_UNKNOWN: tui_warn("unknown command"); break;
@@ -87,7 +111,7 @@ int main(void) {
 		}
 	}
 
-	server_terminate(&server);
+	server_terminate();
 
 	// tui_exit();
 
