@@ -1,5 +1,15 @@
 #pragma once
 
-#define SERVER_SIGNOTIFY	SIGUSR1
 #define SERVER_SIGERR		SIGUSR2
+#define SERVER_SIGNOTIFY	SIGUSR1
+
+typedef enum {
+	SERVER_QUIT,
+
+	SERVER_HOST,
+	SERVER_UNHOST,
+
+	SERVER_CONNECT,
+	SERVER_DISCONNECT,
+} server_act_t;
 

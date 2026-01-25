@@ -10,11 +10,14 @@
 
 typedef struct {
 	pid_t pid;
-	error_t err;
+	char *err;
 } server_t;
 
-server_t server_host(void);
-server_t server_connect(void);
+server_t server_init(void);
+void server_terminate(server_t *server);
 
-void server_disconnect(const server_t *server);
-void server_terminate(const server_t *server);
+void server_host(server_t *server);
+void server_unhost(server_t *server);
+
+void server_connect(server_t *server);
+void server_disconnect(server_t *server);

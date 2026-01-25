@@ -14,6 +14,8 @@ typedef struct {
 	struct sockaddr_in addr;
 
 	time_t start_time;
+
+	bool running;
 } internal_server_t;
 
 void internal_server_init(void);

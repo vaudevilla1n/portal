@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+#include "tui.h"
 #include "common.h"
 #include "server.h"
 #include <time.h>
@@ -10,34 +12,11 @@ typedef enum {
 	CMD_QUIT,
 	CMD_HOST,
 	CMD_CONN,
-	CMD_TERM,
 } cmd_t;
 
+bool is_command(const char *input, const size_t len);
 cmd_t run_command(const char *cmd);
 
-
-void send_chat(const int user_id, const char *input) {
-	printf("[user%d]: %s\n", user_id, input);
-}
-
-static inline bool is_command(const char *input, const size_t len) {
-	if (len <= 1)
-		return false;
-
-	return input[0] == '\\' && input[1] != '\\';
-}
-
-static inline void print_prompt(void) {
-	printf("]> ");
-	fflush(stdout);
-}
-
-void assert_tty(void) {
-	if (!isatty(STDIN_FILENO))
-		die("stdin is not a tty. exiting...");
-	if (!isatty(STDOUT_FILENO))
-		die("stdout is not a tty. exiting...");
-}
 
 typedef enum {
 	CLIENT_IDLE,
@@ -51,29 +30,40 @@ typedef struct {
 } client_t;
 
 client_t client_new(void);
-void client_cleanup(const client_t *client, server_t *s);
 
-#define INPUT_MAX	4096
+static void send_chat(const int user_id, const char *input) {
+	char line[TUI_LINE_MAX];
+	snprintf(line, sizeof(line), "[user%d]: %s\n", user_id, input);
+
+	tui_push_line(line);
+}
 
 int main(void) {
-	assert_tty();
+	server_t server = server_init();
+	if (server.err)
+		die("unable to initialize portal server: %s", server.err);
 
-	server_t server = { 0 };
 	client_t client = client_new();
 
-	char input[INPUT_MAX];
+	// tui_enter();
+
+	char input[4096];
 	for (;;) {
-		print_prompt();
+		/*
+		size_t input_len;
+		const char *input = tui_read_line(&input_len);
+		*/
 
 		if (!fgets(input, sizeof(input), stdin)) {
 			printf("\n");
 			break;
 		}
+
 		const size_t input_len = strcspn(input, "\n");
+		input[input_len] = '\0';
+
 		if (!input_len)
 			continue;
-
-		input[input_len] = '\0';
 
 		if (!is_command(input, input_len)) {
 			send_chat(client.user_id, input);
@@ -86,42 +76,20 @@ int main(void) {
 			break;
 		
 		switch (cmd) {
-		case CMD_HOST: {
-			server = server_host();
+		case CMD_HOST: server_host(&server); break;
 
-			if (!server.err) {
-				client.status = CLIENT_HOSTING;
-				break;
-			}
-
-			server_terminate(&server);
-
-			warn("unable to host server: %s", server.err);
-		} break;
-
-		case CMD_CONN: {
-			server = server_connect();
-
-			if (!server.err) {
-				client.status = CLIENT_CONNECTED;
-				break;
-			}
-
-			warn("unable to host server: %s", server.err);
-		} break;
-
-		case CMD_TERM:	server_terminate(&server); break;
+		case CMD_CONN: server_connect(&server); break;
 
 		// skip '\'
-		case CMD_UNKNOWN: {
-			warn("unknown command: '%s'\n", input + 1); break;
-		} break;
+		case CMD_UNKNOWN: tui_warn("unknown command"); break;
 
-		default: unreachable("main: command");
+		default: __unreachable("main: command");
 		}
 	}
 
-	client_cleanup(&client, &server);
+	server_terminate(&server);
+
+	// tui_exit();
 
 	printf("later\n");
 }
@@ -133,13 +101,11 @@ client_t client_new(void) {
 	};
 }
 
-void client_cleanup(const client_t *client, server_t *s) {
-	switch (client->status) {
-	case CLIENT_HOSTING:	server_terminate(s); break;
-	case CLIENT_CONNECTED:	server_disconnect(s); break;
+bool is_command(const char *input, const size_t len) {
+	if (len <= 1)
+		return false;
 
-	default:		break;
-	}
+	return input[0] == '\\' && input[1] != '\\';
 }
 
 cmd_t run_command(const char *cmd) {
@@ -152,8 +118,6 @@ cmd_t run_command(const char *cmd) {
 		return CMD_CONN;
 	if (STREQ(cmd, "quit"))
 		return CMD_QUIT;
-	if (STREQ(cmd, "terminate"))
-		return CMD_TERM;
 
 	return CMD_UNKNOWN;
 }
