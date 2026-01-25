@@ -145,7 +145,7 @@ void internal_server_init(void) {
 	set_signals();
 
 	main_internal_server.start_time = time(NULL);
-	main_internal_server.running = true;
+	main_internal_server.status = SERVER_IDLE;
 }
 
 
@@ -156,13 +156,6 @@ static void wait_for_signal(void) {
 
 void internal_server_main_loop(void) {
 	for (;;) {
-		wait_for_signal();
-
-		/*
-			TODO
-
-			complete the rest of the server actions
-		*/
 		switch (main_internal_server.status) {
 		case SERVER_HOST:	host_server(); break;
 		case SERVER_UNHOST: 	return;
@@ -170,7 +163,17 @@ void internal_server_main_loop(void) {
 		case SERVER_CONNECT: 	return;
 		case SERVER_DISCONNECT:	return;
 
+		case SERVER_IDLE:	break;
+
 		default:	__unreachable("internal_server_main_loop");
 		}
+
+		wait_for_signal();
+
+		/*
+			TODO
+
+			complete the rest of the server actions
+		*/
 	}
 }

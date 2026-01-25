@@ -5,6 +5,7 @@
 #include <time.h>
 #include <stdio.h>
 #include <string.h>
+#include <signal.h>
 #include <unistd.h>
 
 typedef enum {
@@ -31,6 +32,7 @@ typedef struct {
 
 client_t client_new(void);
 
+
 static void send_chat(const int user_id, const char *input) {
 	char line[TUI_LINE_MAX];
 	snprintf(line, sizeof(line), "[user%d]: %s\n", user_id, input);
@@ -38,11 +40,25 @@ static void send_chat(const int user_id, const char *input) {
 	tui_push_line(line);
 }
 
-/*
-	TODO
-	block and queue signals
-	they fuck up stdio
-*/
+static void block_server_signals(void) {
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, SIGCHLD);
+	sigaddset(&set, SERVER_SIGNOTIFY);
+	sigaddset(&set, SERVER_SIGERR);
+
+	sigprocmask(SIG_BLOCK, &set, nullptr);
+}
+
+static void unblock_server_signals(void) {
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, SIGCHLD);
+	sigaddset(&set, SERVER_SIGNOTIFY);
+	sigaddset(&set, SERVER_SIGERR);
+
+	sigprocmask(SIG_UNBLOCK, &set, nullptr);
+}
 
 int main(void) {
 	server_init();
@@ -52,9 +68,8 @@ int main(void) {
 
 	client_t client = client_new();
 
-	// tui_enter();
+	tui_enter();
 
-	char input[4096];
 	for (;;) {
 		if (main_server.notif) {
 			tui_info(main_server.notif);
@@ -66,27 +81,17 @@ int main(void) {
 			main_server.err = nullptr;
 		}
 
-		if (!main_server.running) {
-			tui_info("internal server exited");
-			break;
+		if (main_server.status == SERVER_KILLED) {
+			tui_warn("internal server exited");
+			main_server.status = SERVER_DEAD;
 		}
 
-		/*
+		block_server_signals();
 		size_t input_len;
 		const char *input = tui_read_line(&input_len);
-		*/
+		unblock_server_signals();
 
-		ssize_t input_len = read(STDIN_FILENO, input, lengthof(input));
-
-		if (input_len <= 0) {
-			printf("\n");
-			break;
-		}
-
-		if (input[input_len - 1] == '\n')
-			input[--input_len] = '\0';
-
-		if (!input_len)
+		if (!input || !input_len)
 			continue;
 
 		if (!is_command(input, input_len)) {
@@ -98,6 +103,11 @@ int main(void) {
 
 		if (cmd == CMD_QUIT)
 			break;
+
+		if (main_server.status == SERVER_DEAD) {
+			tui_warn("internal server has died, commands are useless");
+			continue;
+		}
 		
 		switch (cmd) {
 		case CMD_HOST: server_host(); break;
@@ -113,7 +123,7 @@ int main(void) {
 
 	server_terminate();
 
-	// tui_exit();
+	tui_exit();
 
 	printf("later\n");
 }

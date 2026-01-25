@@ -14,7 +14,7 @@ static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
 
 	switch (sig) {
 	case SIGCHLD: {
-		main_server.running = false;
+		main_server.status = SERVER_DEAD;
 	} break;
 
 	case SERVER_SIGNOTIFY: {
@@ -52,7 +52,7 @@ static int set_signals(void) {
 
 
 void server_init(void) {
-	main_server.running = true;
+	main_server.status = SERVER_RUNNING;
 
 	die_if(set_signals(), "unable to set handler for main process signals: %s", errno_string);
 
@@ -86,6 +86,8 @@ void server_terminate(void) {
 	internal_server_action(SERVER_QUIT);
 
 	waitpid(main_server.pid, nullptr, 0);
+
+	main_server.status = SERVER_DEAD;
 }
 
 void server_host(void) {

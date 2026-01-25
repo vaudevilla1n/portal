@@ -4,6 +4,7 @@
 #define SERVER_SIGNOTIFY	SIGUSR1
 
 typedef enum {
+	SERVER_IDLE,
 	SERVER_QUIT,
 
 	SERVER_HOST,
@@ -11,4 +12,9 @@ typedef enum {
 
 	SERVER_CONNECT,
 	SERVER_DISCONNECT,
+
+	SERVER_RUNNING,
+
+	SERVER_KILLED,
+	SERVER_DEAD,
 } server_status_t;

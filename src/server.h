@@ -9,7 +9,7 @@
 */
 
 typedef struct {
-	bool running;
+	server_status_t status;
 
 	pid_t pid;
 
