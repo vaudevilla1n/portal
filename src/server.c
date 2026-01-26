@@ -1,119 +1,138 @@
 #define _POSIX_C_SOURCE	200809L
-#include "tui.h"
+#define _GNU_SOURCE
 #include "server.h"
 #include "common.h"
-#include "internal_server.h"
+#include <time.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
 
-server_t main_server;
-
-static void signal_handler(const int sig, siginfo_t *siginfo, void *ctx) {
-	unused(ctx);
-
-	switch (sig) {
-	case SIGCHLD: {
-		main_server.status = SERVER_DEAD;
-	} break;
-
-	case SERVER_SIGNOTIFY: {
-		char *notif = siginfo->si_value.sival_ptr;
-		main_server.notif = notif;
-	} break;
-
-	case SERVER_SIGERR: {
-		char *err = siginfo->si_value.sival_ptr;
-		main_server.err = err;
-	} break;
-
-	default: break;
-	}
+static void server_error(server_t *server, const char *err) {
+	server->info_type = SERVER_INFO_ERR;
+	strncpy(server->info, err, SERVER_INFO_MAX);
 }
 
-static int set_signals(void) {
-	struct sigaction act;
+static void server_notification(server_t *server, const char *notif) {
+	server->info_type = SERVER_INFO_NOTIF;
+	strncpy(server->info, notif, SERVER_INFO_MAX);
+}
 
-	sigemptyset(&act.sa_mask);
-	sigaddset(&act.sa_mask, SIGCHLD);
-	sigaddset(&act.sa_mask, SERVER_SIGNOTIFY);
-	sigaddset(&act.sa_mask, SERVER_SIGERR);
-
-	act.sa_flags = SA_SIGINFO | SA_NOCLDSTOP;
-	act.sa_sigaction = signal_handler;
-
-	if (sigaction(SIGCHLD, &act, nullptr)
-		|| sigaction(SERVER_SIGNOTIFY, &act, nullptr)
-		|| sigaction(SERVER_SIGERR, &act, nullptr))
-		return 1;
+server_t server_init(void) {
+	server_t server = { 0 };
 	
-	return 0;
-}
+	server.info_type = SERVER_INFO_QUIET;
+	server.info = calloc(SERVER_INFO_MAX, sizeof(*(server.info)));
 
+	server.sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (server.sock == -1) {
+		server_error(&server, "unable to create socket");
+		return server;
+	}
 
-void server_init(void) {
-	main_server.status = SERVER_RUNNING;
+	const int yes = 1;
+	if (setsockopt(server.sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes))) {
+		server_error(&server, "unable to set socket option");
+		return server;
+	}
 
-	die_if(set_signals(), "unable to set handler for main process signals: %s", errno_string);
+	server.addr.sin_family = AF_INET;
+	server.addr.sin_addr.s_addr = INADDR_ANY;
+	server.addr.sin_port = htons(SERVER_DEFAULT_PORT);
 
-	main_server.pid = fork();
-	die_if(main_server.pid == -1, "unable to spawn server process: %s", errno_string);
+	server.start_time = time(NULL);
+	server.status = SERVER_IDLE;
 
-	if (main_server.pid)
-		return;
-
-	internal_server_init();
-	internal_server_main_loop();
-}
-
-static void internal_server_action(const server_status_t status) {
-	union sigval val = {
-		.sival_int = status,
-	};
-
-	if (sigqueue(main_server.pid, SERVER_SIGNOTIFY, val))
-		main_server.err = "unable to signal internal server";
+	return server;
 }
 
 // should be called deinit but terminate sounds cooler
-void server_terminate(void) {
-	if (main_server.pid <= 0) {
-		tui_warn("no server running");
+void server_terminate(server_t *server) {
+	shutdown(server->sock, SHUT_RDWR);
+	close(server->sock);
+
+	free(server->info);
+
+	*server = (server_t){ 0 };
+}
+
+#define ADDR_MAX		64
+#define NOTIFICATION_MAX	256
+void server_handle_connection(server_t *server) {
+	char addr_str[ADDR_MAX];
+
+	socklen_t peer_addrlen;
+	struct sockaddr_in peer_addr;
+
+	const int peer = accept(server->sock, (struct sockaddr *)&peer_addr, &peer_addrlen);
+	if (peer == -1) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			server_error(server, "unable to accept connection");
+
 		return;
 	}
 
-	tui_info("terminating server...");
-	internal_server_action(SERVER_QUIT);
+	inet_ntop(AF_INET, &peer_addr, addr_str, sizeof(addr_str));
 
-	waitpid(main_server.pid, nullptr, 0);
+	char notif[NOTIFICATION_MAX];
+	snprintf(notif, sizeof(notif), "peer connected (%s:%hu)", addr_str, ntohs(peer_addr.sin_port));
 
-	main_server.status = SERVER_DEAD;
+	server_notification(server, notif);
+
+	write(peer, "hello\n", 6);
+
+	if (shutdown(peer, SHUT_WR))
+		server_error(server, "unable to shutdown peer's connection");
 }
 
-void server_host(void) {
-	tui_info("hosting...");
+void server_host(server_t *server) {
+	if (server->status == SERVER_HOST) {
+		server_notification(server, "already hosting");
+		return;
+	}
 
-	internal_server_action(SERVER_HOST);
+	server_notification(server, "hosting...");
 
-	if (main_server.err)
-		tui_warn("unable to host server");
+	if (bind(server->sock, (struct sockaddr *)&server->addr, sizeof(server->addr))) {
+		server_error(server, "unable to bind to socket");
+		return;
+	}
+
+	if (listen(server->sock, SERVER_DEFAULT_BACKLOG)) {
+		server_error(server, "unable to setup socket for listening");
+		return;
+	}
+
+	if (fcntl(server->sock, F_SETFL, O_NONBLOCK)) {
+		server_error(server, "unable to set socket as nonblocking");
+		return;
+	}
+
+	server->status = SERVER_HOST;
 }
 
-void server_unhost(void) {
-	tui_info("unhosting...");
-	internal_server_action(SERVER_UNHOST);
+void server_unhost(server_t *server) {
+	unused(server);
+
+	server_notification(server, "unhosting...");
+
+	todo("server_cleanup_host");
 }
 
-void server_connect(void) {
-	tui_info("connecting...");
 
-	internal_server_action(SERVER_CONNECT);
+void server_connect(server_t *server) {
+	unused(server);
 
-	if (main_server.err)
-		tui_warn("unable to connect to server");
+	server_notification(server, "connecting...");
+
+	todo("server_connect");
 }
 
-void server_disconnect(void) {
-	tui_info("disconnecting...");
-	internal_server_action(SERVER_DISCONNECT);
+void server_disconnect(server_t *server) {
+	unused(server);
+
+	server_notification(server, "disconnecting...");
+
+	todo("server_disconnect");
 }

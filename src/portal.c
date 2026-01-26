@@ -40,58 +40,40 @@ static void send_chat(const int user_id, const char *input) {
 	tui_push_line(line);
 }
 
-static void block_server_signals(void) {
-	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGCHLD);
-	sigaddset(&set, SERVER_SIGNOTIFY);
-	sigaddset(&set, SERVER_SIGERR);
-
-	sigprocmask(SIG_BLOCK, &set, nullptr);
-}
-
-static void unblock_server_signals(void) {
-	sigset_t set;
-	sigemptyset(&set);
-	sigaddset(&set, SIGCHLD);
-	sigaddset(&set, SERVER_SIGNOTIFY);
-	sigaddset(&set, SERVER_SIGERR);
-
-	sigprocmask(SIG_UNBLOCK, &set, nullptr);
-}
-
 int main(void) {
-	server_init();
+	server_t server = server_init();
 
-	if (main_server.err)
-		die("unable to initialize portal server: %s", main_server.err);
+	if (server.info_type == SERVER_INFO_ERR)
+		die("unable to initialize portal server: %s", server.info);
 
 	client_t client = client_new();
 
 	tui_enter();
 
+	char input[TUI_LINE_MAX];
+
 	for (;;) {
-		if (main_server.notif) {
-			tui_info(main_server.notif);
-			main_server.notif = nullptr;
+		switch (server.info_type) {
+		case SERVER_INFO_NOTIF:	tui_info(server.info); break;
+
+		case SERVER_INFO_ERR:	tui_warn(server.info); break;
+
+		default:		break;
+		}
+		server.info_type = SERVER_INFO_QUIET;
+
+		switch (server.status) {
+		case SERVER_HOST:	server_handle_connection(&server); break;
+		
+		default:		break;
 		}
 
-		if (main_server.err) {
-			tui_warn(main_server.err);
-			main_server.err = nullptr;
-		}
+		if (!tui_read_line(input, sizeof(input)))
+			continue;
+		tui_display_prompt();
 
-		if (main_server.status == SERVER_KILLED) {
-			tui_warn("internal server exited");
-			main_server.status = SERVER_DEAD;
-		}
-
-		block_server_signals();
-		size_t input_len;
-		const char *input = tui_read_line(&input_len);
-		unblock_server_signals();
-
-		if (!input || !input_len)
+		const size_t input_len = strlen(input);
+		if (!input_len)
 			continue;
 
 		if (!is_command(input, input_len)) {
@@ -104,15 +86,10 @@ int main(void) {
 		if (cmd == CMD_QUIT)
 			break;
 
-		if (main_server.status == SERVER_DEAD) {
-			tui_warn("internal server has died, commands are useless");
-			continue;
-		}
-		
 		switch (cmd) {
-		case CMD_HOST: server_host(); break;
+		case CMD_HOST: server_host(&server); break;
 
-		case CMD_CONN: server_connect(); break;
+		case CMD_CONN: server_connect(&server); break;
 
 		// skip '\'
 		case CMD_UNKNOWN: tui_warn("unknown command"); break;
@@ -121,11 +98,11 @@ int main(void) {
 		}
 	}
 
-	server_terminate();
+	server_terminate(&server);
 
 	tui_exit();
 
-	printf("later\n");
+	puts("later");
 }
 
 client_t client_new(void) {
