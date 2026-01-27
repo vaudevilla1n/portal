@@ -10,28 +10,36 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
-tui_context_t tui_main_context = { 0 };
+tui_context_t tui_internal_context;
+display_buffer_t tui_display_buffer;
+input_buffer_t tui_input_buffer;
 
-static void assert_tty(void) {
-	die_if(!isatty(STDIN_FILENO), "stdin is not a tty. exiting...");
-	die_if(!isatty(STDOUT_FILENO), "stdout is not a tty. exiting...");
+#define TUI_PROMPT	"]> "
+#define TUI_TITLE	"(portal)"
+
+static void display_prompt(void) {
+	ansi_move(1, TUI_HEIGHT);
+	ansi_clear_line();
+	printf(TUI_PROMPT);
+
+	if (tui_input_buffer.len) {
+		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
+		fputs(tui_input_buffer.dat, stdout);
+	}
 }
 
-static void set_dimensions(void) {
-	struct winsize ws;
-
-	die_if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1,
-			"unable to get terminal dimensions: %s", errno_string);
-
-	tui_main_context.rows = ws.ws_row;
-	tui_main_context.cols = ws.ws_col;
+static void display_title(void) {
+	ansi_move(1, 1);
+	ansi_clear_line();
+	printf(ANSI_BOLD TUI_TITLE ANSI_RESET);
 }
 
 static void signal_handler(int sig) {
 	switch (sig) {
-	case SIGWINCH:	set_dimensions(); break;
+	case SIGWINCH:	tui_internal_context.resize = true; break;
 
-	default:	break;
+	default:
+		break;
 	}
 }
 
@@ -45,106 +53,116 @@ static void set_signals(void) {
 			"unable to set signal handler for tui: %s", errno_string);
 }
 
-#define TUI_PROMPT	"]> "
-#define TUI_TITLE	"(portal)"
+static void set_dimensions(void) {
+	struct winsize ws;
 
-void tui_display_prompt(void) {
-	ansi_move(1, TUI_HEIGHT);
-	ansi_clear_line();
-	printf(TUI_PROMPT);
+	die_if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1,
+			"unable to get terminal dimensions: %s", errno_string);
+	
+	tui_internal_context.rows = ws.ws_row;
+	tui_internal_context.cols = ws.ws_col;
+	tui_internal_context.update = true;
 }
 
-void tui_display_title(void) {
-	ansi_move(1, 1);
-	ansi_clear_line();
-	printf(ANSI_BOLD TUI_TITLE ANSI_RESET);
+static void assert_tty(void) {
+	die_if(!isatty(STDIN_FILENO), "stdin is not a tty. exiting...");
+	die_if(!isatty(STDOUT_FILENO), "stdout is not a tty. exiting...");
 }
+
 
 void tui_enter(void) {
-	tui_main_context = (tui_context_t){ 0 };
+	tui_internal_context = (tui_context_t){ 0 };
 
 	assert_tty();
 
-	die_if(tcgetattr(STDOUT_FILENO, &tui_main_context.prev_attr),
+	die_if(tcgetattr(STDOUT_FILENO, &tui_internal_context.prev_attr),
 			"unable to get terminal attributes: %s", errno_string);
 
-	cfmakeraw(&tui_main_context.attr);
-	die_if(tcsetattr(STDOUT_FILENO, TCSANOW, &tui_main_context.attr),
+	cfmakeraw(&tui_internal_context.attr);
+	die_if(tcsetattr(STDOUT_FILENO, TCSANOW, &tui_internal_context.attr),
 			"unable to set terminal attributes: %s", errno_string);
 
 	die_if(fcntl(STDIN_FILENO, F_SETFL, O_NONBLOCK), "unable to set stdin as nonblocking: %s", errno_string);
 
 	set_signals();
 
-	set_dimensions();
-
 	ansi_cursor_visible(false);
 	ansi_clear();
 
-	tui_display_title();
-	tui_display_prompt();
+	tui_internal_context.resize = true;
+	tui_internal_context.update = true;
 }
 
 void tui_exit(void) {
 	ansi_clear();
 	ansi_cursor_visible(true);
 
-	die_if(tcsetattr(STDOUT_FILENO, TCSANOW, &tui_main_context.prev_attr),
+	die_if(tcsetattr(STDOUT_FILENO, TCSANOW, &tui_internal_context.prev_attr),
 			"unable to set terminal attributes: %s", errno_string);
 
-	tui_main_context = (tui_context_t){ 0 };
+	tui_internal_context = (tui_context_t){ 0 };
 }
 
 
-void tui_put_line(const int line, const char *text) {
-	ansi_move(1, line);
-	ansi_clear_line();
-
-	fputs(text, stdout);
-	fflush(stdout);
+static inline ptrdiff_t display_buffer_idx(const ptrdiff_t i) {
+	return (tui_display_buffer.pos + i) % countof(tui_display_buffer.lines);
+}
+static inline char *display_buffer_at(const ptrdiff_t i) {
+	return tui_display_buffer.lines[display_buffer_idx(i)];
 }
 
+void tui_draw(void) {
+	if (!tui_internal_context.update && !tui_internal_context.resize)
+		return;
 
-static void scroll_down(void) {
-	// clear title
-	ansi_move(0, 0);
-	ansi_clear_line();
-
-	// clear prompt
-	ansi_move(0, TUI_HEIGHT);
-	ansi_clear_line();
-
-	ansi_scroll_down();
-
-	tui_display_title();
-	tui_display_prompt();
-}
-
-void tui_push_line(const char *text) {
-	ansi_reset_video();
-
-	static int curr_line = TUI_VIEW_START;
-
-	if (curr_line <= TUI_VIEW_END) {
-		tui_put_line(curr_line, text);
-		curr_line++;
-	} else {
-		scroll_down();
-		tui_put_line(TUI_VIEW_END, text);
+	if (tui_internal_context.resize) {
+		tui_internal_context.resize = false;
+		set_dimensions();
 	}
 
-	ansi_reset_video();
-	tui_display_prompt();
+	tui_internal_context.update = false;
+
+	const ptrdiff_t view_lines = (TUI_VIEW_END - TUI_VIEW_START) + 1;
+	const ptrdiff_t start_line = MAX(0, tui_display_buffer.len - view_lines);
+
+	ansi_clear();
+	ansi_move(1, TUI_VIEW_START);
+	for (ptrdiff_t i = start_line; i < tui_display_buffer.len; i++) {
+		ansi_clear_line();
+		printf("%s\r\n", display_buffer_at(i));
+	}
+	
+	display_title();
+	display_prompt();
 }
 
-bool tui_read_line(char *buf, const size_t size) {
-	static size_t len = 0;
 
+static void display_buffer_append(const char *text) {
+	if (tui_display_buffer.len == TUI_DISPLAY_MAX) {
+		char *old = display_buffer_at(tui_display_buffer.len);
+		free(old);
+
+		tui_display_buffer.len--;
+		tui_display_buffer.pos = display_buffer_idx(1);
+	}
+	
+	const ptrdiff_t new = display_buffer_idx(tui_display_buffer.len);
+	tui_display_buffer.lines[new] = strdup(text);
+	tui_display_buffer.len++;
+}
+
+void tui_puts(const char *text) {
+	display_buffer_append(text);
+	tui_internal_context.update = true;
+}
+
+
+static const char *read_line(void) {
 	bool line_read = false;
 	bool reading = true;
 
 	while (reading) {
-		if (len == size) {
+		if (tui_input_buffer.len == TUI_INPUT_MAX) {
 			line_read = true;
 			break;
 		}
@@ -157,32 +175,44 @@ bool tui_read_line(char *buf, const size_t size) {
 		} break;
 
 		case ANSI_ENTER: {
-			if (len)
+			if (tui_input_buffer.len)
 				line_read = true;
 
 			reading = false;
 		} break;
 
 		case ANSI_BS: {
-			if (!len)
+			if (!tui_input_buffer.len)
 				continue;
 
 			ansi_move_left(1);
 			ansi_clear_line();
-			len--;
+			tui_input_buffer.len--;
 		} break;
 
 		default: {
 			putchar(c);
-			buf[len++] = c;
+			tui_input_buffer.dat[tui_input_buffer.len++] = c;
 		} break;
 		}
 	}
 
 	if (line_read) {
-		buf[len] = '\0';
-		len = 0;
-	}
+		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
+		tui_input_buffer.len = 0;
 
-	return line_read;
+		return tui_input_buffer.dat;
+	} else {
+		return nullptr;
+	}
+}
+
+const char *tui_prompt(void) {
+	const char *input = read_line();
+
+	if (!input)
+		return nullptr;
+
+	display_prompt();
+	return input;
 }

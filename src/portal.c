@@ -16,7 +16,7 @@ typedef enum {
 } cmd_t;
 
 bool is_command(const char *input, const size_t len);
-cmd_t run_command(const char *cmd);
+cmd_t command(const char *cmd);
 
 
 typedef enum {
@@ -34,71 +34,85 @@ client_t client_new(void);
 
 
 static void send_chat(const int user_id, const char *input) {
-	char line[TUI_LINE_MAX];
-	snprintf(line, sizeof(line), "[user%d]: %s\n", user_id, input);
+	char line[TUI_INPUT_MAX + 256];
+	snprintf(line, sizeof(line), "[user%d]: %s", user_id, input);
 
-	tui_push_line(line);
+	tui_puts(line);
+}
+
+static void report_server_info(void) {
+	const server_info_t info = server_read_info();
+	switch (info.type) {
+	case SERVER_INFO_ERR:	
+	case SERVER_INFO_NOTIF: {
+		tui_puts(info.text);
+	} break;
+
+	default:
+		break;
+	}
+}
+
+static void handle_server_status(void) {
+	switch (server_internal_main.status) {
+	case SERVER_HOST: {
+		server_handle_connection();
+		report_server_info();
+	} break;
+	
+	default:
+		break;
+	}
+}
+
+static void command_server(const cmd_t cmd) {
+	switch (cmd) {
+	case CMD_HOST: server_host(); break;
+
+	case CMD_CONN: server_connect(); break;
+
+	case CMD_UNKNOWN: tui_puts("unknown command"); break;
+
+	default: __unreachable("main: command");
+	}
 }
 
 int main(void) {
-	server_t server = server_init();
+	server_init();
 
-	if (server.info_type == SERVER_INFO_ERR)
-		die("unable to initialize portal server: %s", server.info);
+	if (server_error())
+		die("unable to initialize portal server: %s", server_read_info().text);
 
 	client_t client = client_new();
 
 	tui_enter();
 
-	char input[TUI_LINE_MAX];
-
 	for (;;) {
-		switch (server.info_type) {
-		case SERVER_INFO_NOTIF:	tui_info(server.info); break;
+		tui_draw();
 
-		case SERVER_INFO_ERR:	tui_warn(server.info); break;
+		report_server_info();
 
-		default:		break;
-		}
-		server.info_type = SERVER_INFO_QUIET;
+		handle_server_status();
 
-		switch (server.status) {
-		case SERVER_HOST:	server_handle_connection(&server); break;
-		
-		default:		break;
-		}
-
-		if (!tui_read_line(input, sizeof(input)))
-			continue;
-		tui_display_prompt();
-
-		const size_t input_len = strlen(input);
-		if (!input_len)
+		const char *input = tui_prompt();
+		if (!input)
 			continue;
 
-		if (!is_command(input, input_len)) {
+		const size_t len = strlen(input);
+
+		if (is_command(input, len)) {
+			const cmd_t cmd = command(input);
+
+			if (cmd == CMD_QUIT)
+				break;
+
+			command_server(cmd);
+		} else {
 			send_chat(client.user_id, input);
-			continue;
-		}
-
-		const cmd_t cmd = run_command(input);
-
-		if (cmd == CMD_QUIT)
-			break;
-
-		switch (cmd) {
-		case CMD_HOST: server_host(&server); break;
-
-		case CMD_CONN: server_connect(&server); break;
-
-		// skip '\'
-		case CMD_UNKNOWN: tui_warn("unknown command"); break;
-
-		default: __unreachable("main: command");
 		}
 	}
 
-	server_terminate(&server);
+	server_terminate();
 
 	tui_exit();
 
@@ -119,7 +133,7 @@ bool is_command(const char *input, const size_t len) {
 	return input[0] == '\\' && input[1] != '\\';
 }
 
-cmd_t run_command(const char *cmd) {
+cmd_t command(const char *cmd) {
 	// skip '\'
 	cmd++;
 

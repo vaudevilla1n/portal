@@ -28,6 +28,11 @@ typedef enum {
 
 	SERVER_INFO_ERR,
 	SERVER_INFO_NOTIF,
+} server_info_type_t;
+
+typedef struct {
+	char text[SERVER_INFO_MAX];
+	server_info_type_t type;
 } server_info_t;
 
 typedef struct {
@@ -38,16 +43,21 @@ typedef struct {
 
 	server_status_t status;
 
-	char *info;
-	server_info_t info_type;
+	server_info_t info;
 } server_t;
 
-server_t server_init(void);
-void server_terminate(server_t *server);
+extern server_t server_internal_main;
 
-void server_host(server_t *server);
-void server_handle_connection(server_t *server);
-void server_unhost(server_t *server);
+void server_init(void);
+void server_terminate(void);
 
-void server_connect(server_t *server);
-void server_disconnect(server_t *server);
+bool server_error(void);
+
+server_info_t server_read_info(void);
+
+void server_host(void);
+void server_handle_connection(void);
+void server_unhost(void);
+
+void server_connect(void);
+void server_disconnect(void);
