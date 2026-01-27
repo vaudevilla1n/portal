@@ -56,7 +56,7 @@ static void report_server_info(void) {
 static void handle_server_status(void) {
 	switch (server_internal_main.status) {
 	case SERVER_HOST: {
-		server_handle_connection();
+		server_probe();
 		report_server_info();
 	} break;
 	

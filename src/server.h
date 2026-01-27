@@ -6,7 +6,7 @@
 #include <netinet/in.h>
 
 #define SERVER_DEFAULT_PORT	9166
-#define SERVER_DEFAULT_BACKLOG	16
+#define SERVER_CONNECTION_MAX	256
 
 #define SERVER_INFO_MAX		4096
 
@@ -56,7 +56,7 @@ bool server_error(void);
 server_info_t server_read_info(void);
 
 void server_host(void);
-void server_handle_connection(void);
+void server_probe(void);
 void server_unhost(void);
 
 void server_connect(void);
