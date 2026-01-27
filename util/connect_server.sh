@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-nc localhost 9166
+nc -c localhost 9166

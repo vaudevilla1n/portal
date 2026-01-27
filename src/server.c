@@ -6,8 +6,9 @@
 #include <poll.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
+#include <stddef.h>
 #include <signal.h>
+#include <unistd.h>
 #include <sys/wait.h>
 #include <arpa/inet.h>
 
@@ -23,10 +24,12 @@ network_t network;
 static void error(const char *err) {
 	server_internal_main.info.type = SERVER_INFO_ERR;
 
-	if (errno)
+	if (errno) {
 		snprintf(server_internal_main.info.text, SERVER_INFO_MAX, "%s: %s", err, errno_string);
-	else
+		errno = 0;
+	} else {
 		strncpy(server_internal_main.info.text, err, SERVER_INFO_MAX);
+	}
 }
 
 static void notification(const char *notif) {
@@ -62,6 +65,7 @@ void server_init(void) {
 // should be called deinit but terminate sounds cooler
 void server_terminate(void) {
 	close(server_internal_main.sock);
+	server_internal_main.status = SERVER_DEAD;
 }
 
 
@@ -81,7 +85,7 @@ server_info_t server_read_info(void) {
 static void network_init(void) {
 	network.peers[network.npeers++] = (struct pollfd) {
 		.fd = server_internal_main.sock,
-		.events = POLLIN,
+		.events = (POLLIN | POLLOUT),
 	};
 }
 
@@ -113,13 +117,71 @@ void server_host(void) {
 	server_internal_main.status = SERVER_HOST;
 }
 
-void network_del(const nfds_t peer) {
+static void network_del(const nfds_t peer) {
 	shutdown(network.peers[peer].fd, SHUT_RDWR);
 	close(network.peers[peer].fd);
+	network.peers[peer].fd = -1;
+}
 
-	memmove(network.peers + peer, network.peers + peer + 1, (network.npeers - peer) * sizeof(network.peers[0]));
+static void network_update(void) {
+	ptrdiff_t pos = -1;
 
-	network.npeers--;
+	for (nfds_t i = 0; i < network.npeers; i++) {
+		if (network.peers[i].fd == -1) {
+			pos = i;
+			break;
+		}
+	}
+
+	if (pos == -1)
+		return;
+
+	ptrdiff_t free = pos;
+	ptrdiff_t dels = 0;
+	for (nfds_t i = pos; i < network.npeers; i++) {
+		if (network.peers[i].fd == -1) {
+			dels++;
+		} else {
+			network.peers[free] = network.peers[i];
+			network.peers[i].fd = -1;
+		}
+	}
+
+	network.npeers -= dels;
+}
+
+
+static void message(const char *msg, const size_t len) {
+	if (!poll(network.peers, network.npeers, 0)) {
+		error("unable to send message");
+		return;
+	}
+
+	for (nfds_t peer = 0; peer < network.npeers; peer++) {
+		const struct pollfd *pfd = network.peers + peer;
+
+		if (pfd->fd == server_internal_main.sock) {
+			notification(msg);
+			continue;
+		}
+
+		if (pfd->revents & (POLLERR | POLLHUP | POLLNVAL)) {
+			error("unable to send message to peer");
+			network_del(peer);
+			continue;
+		}
+
+		if (!(pfd->revents & POLLOUT)) {
+			error("unable to send message to peer");
+			network_del(peer);
+		} else {
+			write(pfd->fd, msg, len);
+		}
+	}
+}
+
+static inline bool nonblocking_errno(void) {
+	return errno == EAGAIN || errno == EWOULDBLOCK;
 }
 
 #define ADDR_MAX		64
@@ -135,55 +197,45 @@ void server_probe() {
 
 	char notif[NOTIFICATION_MAX];
 
-	const nfds_t total_peers = network.npeers;
-	for (nfds_t i = 0; i < total_peers; i++) {
-		if (!network.peers[i].revents)
-			continue;
-
-		if (network.peers[i].fd == server_internal_main.sock) {
-			if (network.peers[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+	for (nfds_t peer = 0; peer < network.npeers; peer++) {
+		if (network.peers[peer].fd == server_internal_main.sock) {
+			if (network.peers[peer].revents & (POLLERR | POLLHUP | POLLNVAL)) {
 				error("unable to accept connection");
-				return;
+				continue;
 			}
 
-			const int peer = accept(server_internal_main.sock, (struct sockaddr *)&peer_addr, &peer_addrlen);
+			if (!(network.peers[peer].revents & (POLLIN)))
+				continue;
+
+			const int peer_sock = accept(server_internal_main.sock, (struct sockaddr *)&peer_addr, &peer_addrlen);
 
 			inet_ntop(AF_INET, &peer_addr, addr_str, sizeof(addr_str));
 			snprintf(notif, sizeof(notif), "peer connected (%s:%hu)", addr_str, ntohs(peer_addr.sin_port));
 
 			notification(notif);
 
-			if (peer == -1) {
-				error("unable to accept connection");
-				return;
-			}
-
 			network.peers[network.npeers++] = (struct pollfd) {
-				.fd = peer,
+				.fd = peer_sock,
 				.events = (POLLOUT | POLLIN),
 			};
-
-			continue;
-		}
-
-		if (network.peers[i].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+		} else if (network.peers[peer].revents & (POLLERR | POLLHUP | POLLNVAL)) {
 			notification("peer connection error");
-			network_del(i);
-			i--;
-		} else if (network.peers[i].revents & POLLIN) {
-			const size_t len = read(network.peers[i].fd, notif, NOTIFICATION_MAX - 1);
+			network_del(peer);
+		} else if (network.peers[peer].revents & POLLIN) {
+			const ssize_t len = read(network.peers[peer].fd, notif, NOTIFICATION_MAX - 1);
 
-			if (!len) {
+			if (len <= 0) {
 				notification("peer eof");
-				network_del(i);
-				i--;
+				network_del(peer);
 				continue;
 			}
 
 			notif[len - 1] = '\0';
-			notification(notif);
+			message(notif, len - 1);
 		}
 	}
+
+	network_update();
 }
 
 void server_unhost(void) {
