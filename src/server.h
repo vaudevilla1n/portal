@@ -9,6 +9,7 @@
 #define SERVER_CONNECTION_MAX	256
 
 #define SERVER_INFO_MAX		4096
+#define SERVER_MSG_MAX		1024
 
 /*
 	thats all folks
@@ -28,6 +29,7 @@ typedef enum {
 
 	SERVER_INFO_ERR,
 	SERVER_INFO_NOTIF,
+	SERVER_INFO_MSG,
 } server_info_type_t;
 
 typedef struct {
@@ -51,7 +53,7 @@ extern server_t server_internal_main;
 void server_init(void);
 void server_terminate(void);
 
-bool server_error(void);
+bool server_in_error(void);
 
 server_info_t server_read_info(void);
 
@@ -61,3 +63,5 @@ void server_unhost(void);
 
 void server_connect(void);
 void server_disconnect(void);
+
+void server_distribute_message(const int userid, const char *msg);

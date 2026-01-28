@@ -12,7 +12,7 @@
 
 #define ANSI_RED	"\033[38;2;255;0;0m"
 #define ANSI_GREEN	"\033[38;2;0;153;0m"
-#define ANSI_YELLOW	"\033[38;2;255;128;0m"
+#define ANSI_ORANGE	"\033[38;2;255;128;0m"
 #define ANSI_BLUE	"\033[38;2;21;129;192m"
 
 #define ANSI_RESET	"\033[0m"

@@ -10,17 +10,47 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 
-tui_context_t tui_internal_context;
-display_buffer_t tui_display_buffer;
-input_buffer_t tui_input_buffer;
+typedef struct {
+	char lines[TUI_DISPLAY_MAX][TUI_LINE_MAX];
+	ptrdiff_t pos;
+	ptrdiff_t len;
+} display_buffer_t;
 
-#define TUI_PROMPT	"]> "
-#define TUI_TITLE	"(portal)"
+typedef struct {
+	char dat[TUI_INPUT_MAX];
+	ptrdiff_t len;
+} input_buffer_t;
+
+typedef struct {
+	struct termios prev_attr;
+	struct termios attr;
+
+	ptrdiff_t rows;
+	ptrdiff_t cols;
+
+	bool update;
+	bool resize;
+} tui_context_t;
+
+input_buffer_t tui_input_buffer;
+display_buffer_t tui_display_buffer;
+tui_context_t tui_internal_context;
+
+bool tui_prompt_set = false;
+char tui_prompt[TUI_PROMPT_MAX];
+
+#define TUI_TITLE		"(portal)"
+#define TUI_DEFAULT_PROMPT	")> "
+
+void tui_set_prompt(const int user_id) {
+	snprintf(tui_prompt, TUI_PROMPT_MAX, "(user%d)> ", user_id);
+	tui_prompt_set = true;
+}
 
 static void display_prompt(void) {
 	ansi_move(1, TUI_HEIGHT);
 	ansi_clear_line();
-	printf(TUI_PROMPT);
+	printf("%s", tui_prompt);
 
 	if (tui_input_buffer.len) {
 		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
@@ -91,6 +121,10 @@ void tui_enter(void) {
 
 	tui_internal_context.resize = true;
 	tui_internal_context.update = true;
+
+	if (!tui_prompt_set) {
+		snprintf(tui_prompt, TUI_PROMPT_MAX, TUI_DEFAULT_PROMPT);
+	}
 }
 
 void tui_exit(void) {
@@ -136,24 +170,23 @@ void tui_draw(void) {
 	display_prompt();
 }
 
+void tui_puts(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
 
-static void display_buffer_append(const char *text) {
 	if (tui_display_buffer.len == TUI_DISPLAY_MAX) {
-		char *old = display_buffer_at(tui_display_buffer.len);
-		free(old);
-
 		tui_display_buffer.len--;
 		tui_display_buffer.pos = display_buffer_idx(1);
 	}
-	
-	const ptrdiff_t new = display_buffer_idx(tui_display_buffer.len);
-	tui_display_buffer.lines[new] = strdup(text);
-	tui_display_buffer.len++;
-}
 
-void tui_puts(const char *text) {
-	display_buffer_append(text);
+	char *line = display_buffer_at(tui_display_buffer.len);
+	vsnprintf(line, TUI_LINE_MAX, fmt, args);
+
+	tui_display_buffer.len++;
+
 	tui_internal_context.update = true;
+
+	va_end(args);
 }
 
 
@@ -162,11 +195,6 @@ static const char *read_line(void) {
 	bool reading = true;
 
 	while (reading) {
-		if (tui_input_buffer.len == TUI_INPUT_MAX) {
-			line_read = true;
-			break;
-		}
-
 		const int c = getchar();
 
 		switch (c) {
@@ -191,6 +219,9 @@ static const char *read_line(void) {
 		} break;
 
 		default: {
+			if (tui_input_buffer.len == TUI_INPUT_MAX)
+				break;
+
 			putchar(c);
 			tui_input_buffer.dat[tui_input_buffer.len++] = c;
 		} break;
@@ -207,7 +238,7 @@ static const char *read_line(void) {
 	}
 }
 
-const char *tui_prompt(void) {
+const char *tui_repl(void) {
 	const char *input = read_line();
 
 	if (!input)

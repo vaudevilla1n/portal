@@ -6,10 +6,10 @@
 #include <poll.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <signal.h>
 #include <unistd.h>
-#include <sys/wait.h>
 #include <arpa/inet.h>
 
 typedef struct {
@@ -21,21 +21,38 @@ typedef struct {
 server_t server_internal_main;
 network_t network;
 
-static void error(const char *err) {
+
+static void error(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+
 	server_internal_main.info.type = SERVER_INFO_ERR;
 
-	if (errno) {
-		snprintf(server_internal_main.info.text, SERVER_INFO_MAX, "%s: %s", err, errno_string);
-		errno = 0;
-	} else {
-		strncpy(server_internal_main.info.text, err, SERVER_INFO_MAX);
-	}
+	vsnprintf(server_internal_main.info.text, SERVER_INFO_MAX, fmt, args);
+
+	va_end(args);
 }
 
-static void notification(const char *notif) {
+static void notification(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+
 	server_internal_main.info.type = SERVER_INFO_NOTIF;
-	strncpy(server_internal_main.info.text, notif, SERVER_INFO_MAX);
+	vsnprintf(server_internal_main.info.text, SERVER_INFO_MAX, fmt, args);
+
+	va_end(args);
 }
+
+void message(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+
+	server_internal_main.info.type = SERVER_INFO_MSG;
+	vsnprintf(server_internal_main.info.text, SERVER_INFO_MAX, fmt, args);
+
+	va_end(args);
+}
+
 
 void server_init(void) {
 	server_internal_main.info.type = SERVER_INFO_QUIET;
@@ -69,7 +86,7 @@ void server_terminate(void) {
 }
 
 
-bool server_error(void) {
+bool server_in_error(void) {
 	return server_internal_main.info.type == SERVER_INFO_ERR;
 }
 
@@ -87,6 +104,45 @@ static void network_init(void) {
 		.fd = server_internal_main.sock,
 		.events = (POLLIN | POLLOUT),
 	};
+}
+
+static void network_add(const int peer) {
+	network.peers[network.npeers++] = (struct pollfd) {
+		.fd = peer,
+		.events = (POLLOUT | POLLIN),
+	};
+}
+
+static void network_del(const nfds_t pos) {
+	shutdown(network.peers[pos].fd, SHUT_RDWR);
+	close(network.peers[pos].fd);
+	network.peers[pos].fd = -1;
+}
+
+static void network_update(void) {
+	ptrdiff_t free = -1;
+
+	for (nfds_t i = 0; i < network.npeers; i++) {
+		if (network.peers[i].fd == -1) {
+			free = i;
+			break;
+		}
+	}
+
+	if (free == -1)
+		return;
+
+	ptrdiff_t dels = 0;
+	for (nfds_t i = free; i < network.npeers; i++) {
+		if (network.peers[i].fd == -1) {
+			dels++;
+		} else {
+			network.peers[free++] = network.peers[i];
+			network.peers[i].fd = -1;
+		}
+	}
+
+	network.npeers -= dels;
 }
 
 void server_host(void) {
@@ -117,121 +173,98 @@ void server_host(void) {
 	server_internal_main.status = SERVER_HOST;
 }
 
-static void network_del(const nfds_t peer) {
-	shutdown(network.peers[peer].fd, SHUT_RDWR);
-	close(network.peers[peer].fd);
-	network.peers[peer].fd = -1;
-}
+#define SERVER_MSG_FMT(uid, msg) \
+	"(user%d): %.*s", (uid), SERVER_MSG_MAX, (msg)
 
-static void network_update(void) {
-	ptrdiff_t pos = -1;
-
-	for (nfds_t i = 0; i < network.npeers; i++) {
-		if (network.peers[i].fd == -1) {
-			pos = i;
-			break;
-		}
-	}
-
-	if (pos == -1)
+void server_distribute_message(const int user_id, const char *msg) {
+	/*
+		network either unitialized (npeers == 0) or has no peers (npeers == 1)
+		just echo the message back to the server
+	*/
+	if (network.npeers <= 1) {
+		message(SERVER_MSG_FMT(user_id, msg));
 		return;
-
-	ptrdiff_t free = pos;
-	ptrdiff_t dels = 0;
-	for (nfds_t i = pos; i < network.npeers; i++) {
-		if (network.peers[i].fd == -1) {
-			dels++;
-		} else {
-			network.peers[free] = network.peers[i];
-			network.peers[i].fd = -1;
-		}
 	}
 
-	network.npeers -= dels;
-}
-
-
-static void message(const char *msg, const size_t len) {
 	if (!poll(network.peers, network.npeers, 0)) {
 		error("unable to send message");
 		return;
 	}
 
-	for (nfds_t peer = 0; peer < network.npeers; peer++) {
-		const struct pollfd *pfd = network.peers + peer;
+	for (nfds_t i = 0; i < network.npeers; i++) {
+		const int peer = network.peers[i].fd;
+		const short events = network.peers[i].revents;
 
-		if (pfd->fd == server_internal_main.sock) {
-			notification(msg);
-			continue;
-		}
-
-		if (pfd->revents & (POLLERR | POLLHUP | POLLNVAL)) {
-			error("unable to send message to peer");
-			network_del(peer);
-			continue;
-		}
-
-		if (!(pfd->revents & POLLOUT)) {
-			error("unable to send message to peer");
-			network_del(peer);
+		if (peer == server_internal_main.sock) {
+			message(SERVER_MSG_FMT(user_id, msg));
+		} else if (events & POLLOUT) {
+			dprintf(peer, SERVER_MSG_FMT(user_id, msg));
+			dprintf(peer, "\n");
 		} else {
-			write(pfd->fd, msg, len);
+			error("unable to send message to peer");
+			network_del(peer);
 		}
 	}
 }
 
-static inline bool nonblocking_errno(void) {
-	return errno == EAGAIN || errno == EWOULDBLOCK;
+static void message_peers(const int peer_from) {
+	char msg[SERVER_MSG_MAX + 1];
+	ssize_t len = read(peer_from, msg, SERVER_MSG_MAX);
+
+	if (len <= 0)
+		return;
+
+	// overwrite newline for now, this is just for testing
+	if (msg[len - 1] == '\n')
+		len--;
+
+	if (len <= 0)
+		return;
+
+	msg[len] = '\0';
+
+	server_distribute_message(peer_from, msg);
 }
 
-#define ADDR_MAX		64
-#define NOTIFICATION_MAX	256
-void server_probe() {
-	char addr_str[ADDR_MAX];
+#define IP_ADDR_MAX	64
+static void connect_peer(void) {
+	char addr_str[IP_ADDR_MAX];
 
 	socklen_t peer_addrlen;
 	struct sockaddr_in peer_addr;
+	const int peer = accept(server_internal_main.sock, (struct sockaddr *)&peer_addr, &peer_addrlen);
 
+	inet_ntop(AF_INET, &peer_addr, addr_str, sizeof(addr_str));
+	notification("'user%d' connected (%s:%hu)", peer, addr_str, ntohs(peer_addr.sin_port));
+
+	network_add(peer);
+}
+
+void server_probe() {
 	if (!poll(network.peers, network.npeers, 0))
 		return;
 
-	char notif[NOTIFICATION_MAX];
+	for (nfds_t i = 0; i < network.npeers; i++) {
+		const int peer = network.peers[i].fd;
+		const short events = network.peers[i].revents;
 
-	for (nfds_t peer = 0; peer < network.npeers; peer++) {
-		if (network.peers[peer].fd == server_internal_main.sock) {
-			if (network.peers[peer].revents & (POLLERR | POLLHUP | POLLNVAL)) {
+		if (peer == server_internal_main.sock) {
+			if (events & (POLLERR | POLLHUP | POLLNVAL)) {
 				error("unable to accept connection");
-				continue;
+			} else if (events & (POLLIN)) {
+				connect_peer();
 			}
 
-			if (!(network.peers[peer].revents & (POLLIN)))
-				continue;
+		} else if (events & (POLLHUP)) {
+			notification("'user%d' disconnected", peer);
+			network_del(i);
 
-			const int peer_sock = accept(server_internal_main.sock, (struct sockaddr *)&peer_addr, &peer_addrlen);
+		} else if (events & (POLLERR | POLLNVAL)) {
+			error("peer connection error");
+			network_del(i);
 
-			inet_ntop(AF_INET, &peer_addr, addr_str, sizeof(addr_str));
-			snprintf(notif, sizeof(notif), "peer connected (%s:%hu)", addr_str, ntohs(peer_addr.sin_port));
-
-			notification(notif);
-
-			network.peers[network.npeers++] = (struct pollfd) {
-				.fd = peer_sock,
-				.events = (POLLOUT | POLLIN),
-			};
-		} else if (network.peers[peer].revents & (POLLERR | POLLHUP | POLLNVAL)) {
-			notification("peer connection error");
-			network_del(peer);
-		} else if (network.peers[peer].revents & POLLIN) {
-			const ssize_t len = read(network.peers[peer].fd, notif, NOTIFICATION_MAX - 1);
-
-			if (len <= 0) {
-				notification("peer eof");
-				network_del(peer);
-				continue;
-			}
-
-			notif[len - 1] = '\0';
-			message(notif, len - 1);
+		} else if (events & POLLIN) {
+			message_peers(peer);
 		}
 	}
 

@@ -34,26 +34,24 @@ client_t client_new(void);
 
 
 static void send_chat(const int user_id, const char *input) {
-	char line[TUI_INPUT_MAX + 256];
-	snprintf(line, sizeof(line), "[user%d]: %s", user_id, input);
-
-	tui_puts(line);
+	server_distribute_message(user_id, input);
 }
 
 static void report_server_info(void) {
 	const server_info_t info = server_read_info();
 	switch (info.type) {
-	case SERVER_INFO_ERR:	
-	case SERVER_INFO_NOTIF: {
-		tui_puts(info.text);
-	} break;
+	case SERVER_INFO_ERR:	tui_puts(ANSI_BOLD ANSI_ORANGE "%s" ANSI_RESET, info.text); break;
+	case SERVER_INFO_NOTIF:	tui_puts(ANSI_BOLD "(portal) %s" ANSI_RESET, info.text); break;
+	case SERVER_INFO_MSG:	tui_puts("%s", info.text); break;
 
 	default:
 		break;
 	}
 }
 
-static void handle_server_status(void) {
+static void run_server(void) {
+	report_server_info();
+
 	switch (server_internal_main.status) {
 	case SERVER_HOST: {
 		server_probe();
@@ -80,21 +78,19 @@ static void command_server(const cmd_t cmd) {
 int main(void) {
 	server_init();
 
-	if (server_error())
+	if (server_in_error())
 		die("unable to initialize portal server: %s", server_read_info().text);
 
 	client_t client = client_new();
 
+	tui_set_prompt(client.user_id);
 	tui_enter();
 
 	for (;;) {
 		tui_draw();
+		run_server();
 
-		report_server_info();
-
-		handle_server_status();
-
-		const char *input = tui_prompt();
+		const char *input = tui_repl();
 		if (!input)
 			continue;
 
