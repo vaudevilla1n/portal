@@ -222,6 +222,9 @@ static const char *read_line(void) {
 			if (tui_input_buffer.len == TUI_INPUT_MAX)
 				break;
 
+			if (!isprint(c))
+				break;
+
 			putchar(c);
 			tui_input_buffer.dat[tui_input_buffer.len++] = c;
 		} break;
