@@ -1,6 +1,8 @@
 .PHONY: all clean
 
 all: portal
+
+portal:
 	make -C src/
 
 clean:
