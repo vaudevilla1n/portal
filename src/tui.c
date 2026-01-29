@@ -1,8 +1,11 @@
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE	200809L
+
 #include "tui.h"
+
 #include "ansi.h"
 #include "common.h"
+
 #include <ctype.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -35,6 +38,7 @@ typedef struct {
 input_buffer_t tui_input_buffer;
 display_buffer_t tui_display_buffer;
 tui_context_t tui_internal_context;
+
 
 bool tui_prompt_set = false;
 char tui_prompt[TUI_PROMPT_MAX];
@@ -190,7 +194,7 @@ void tui_puts(const char *fmt, ...) {
 }
 
 
-static const char *read_line(void) {
+static const char *read_line(size_t *len) {
 	bool line_read = false;
 	bool reading = true;
 
@@ -209,12 +213,14 @@ static const char *read_line(void) {
 			reading = false;
 		} break;
 
+		case ANSI_DEL:
 		case ANSI_BS: {
 			if (!tui_input_buffer.len)
 				continue;
 
 			ansi_move_left(1);
 			ansi_clear_line();
+
 			tui_input_buffer.len--;
 		} break;
 
@@ -225,28 +231,35 @@ static const char *read_line(void) {
 			if (!isprint(c))
 				break;
 
-			putchar(c);
 			tui_input_buffer.dat[tui_input_buffer.len++] = c;
+
+			putchar(c);
 		} break;
 		}
 	}
 
 	if (line_read) {
+		if (len)
+			*len = tui_input_buffer.len;
+
 		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
 		tui_input_buffer.len = 0;
 
 		return tui_input_buffer.dat;
 	} else {
+		if (len)
+			*len = 0;
+
 		return nullptr;
 	}
 }
 
-const char *tui_repl(void) {
-	const char *input = read_line();
+char *tui_repl(size_t *len) {
+	const char *input = read_line(len);
 
 	if (!input)
 		return nullptr;
 
 	display_prompt();
-	return input;
+	return xstrdup(input);
 }

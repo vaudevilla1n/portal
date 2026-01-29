@@ -5,6 +5,7 @@
 #endif
 
 #include "ansi.h"
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +35,8 @@
 #define xcalloc(n, size)		assert_ptr(calloc((n), (size)), "calloc")
 #define xrealloc(p, size)		assert_ptr(realloc((p), (size)), "realloc")
 #define xreallocarray(p, n, size)	assert_ptr(reallocarray((p), (n), (size)), "reallocarray")
+
+#define xstrdup(s)			assert_ptr(strdup(s), "strdup")
 
 #define STREQ(s, t)	(!strcmp((s), (t)))
 

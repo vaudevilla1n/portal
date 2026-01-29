@@ -2,6 +2,7 @@
 
 #define ANSI_ESC	'\033'
 #define ANSI_BS		'\010'
+#define ANSI_DEL	'\x7f'
 #define ANSI_ENTER	'\r'
 #define ANSI_PGDN	"[6~"
 #define ANSI_PGUP	"[5~"

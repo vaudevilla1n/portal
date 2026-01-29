@@ -24,4 +24,9 @@ void tui_draw(void);
 
 void tui_puts(const char *fmt, ...);
 
-const char *tui_repl(void);
+#define tui_warn(fmt, ...)	\
+	tui_puts(ANSI_BOLD "(portal) " ANSI_ORANGE fmt ANSI_RESET __VA_OPT__(,)__VA_ARGS__)
+#define tui_info(fmt, ...)	\
+	tui_puts(ANSI_BOLD "(portal) " fmt ANSI_RESET __VA_OPT__(,)__VA_ARGS__)
+
+char *tui_repl(size_t *len);

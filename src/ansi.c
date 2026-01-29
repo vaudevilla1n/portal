@@ -1,4 +1,5 @@
 #include "ansi.h"
+
 #include <stdio.h>
 
 void ansi_move(const int x, const int y) {
