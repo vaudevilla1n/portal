@@ -54,6 +54,8 @@ void tui_set_prompt(const int user_id) {
 static void display_prompt(void) {
 	ansi_move(1, TUI_HEIGHT);
 	ansi_clear_line();
+	ansi_cursor_visible(true);
+
 	printf("%s", tui_prompt);
 
 	if (tui_input_buffer.len) {
@@ -152,6 +154,8 @@ static inline char *display_buffer_at(const ptrdiff_t i) {
 void tui_draw(void) {
 	if (!tui_internal_context.update && !tui_internal_context.resize)
 		return;
+	
+	ansi_cursor_visible(false);
 
 	if (tui_internal_context.resize) {
 		tui_internal_context.resize = false;
