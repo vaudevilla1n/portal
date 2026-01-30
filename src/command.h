@@ -9,6 +9,8 @@ typedef enum {
 
 	CMD_QUIT,
 
+	CMD_STATUS,
+
 	CMD_HOST,
 	CMD_UNHOST,
 

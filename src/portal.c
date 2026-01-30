@@ -15,7 +15,7 @@ static void command_server(const cmd_t cmd) {
 	const char *addr = cmd.argc > 0 ? cmd.argv[0] : nullptr;
 	const char *port = cmd.argc > 1 ? cmd.argv[1] : nullptr;
 
-	if ((addr || port) && (cmd.type == CMD_UNHOST || CMD_DISCONN))
+	if ((addr || port) && (cmd.type == CMD_UNHOST || CMD_DISCONN || CMD_STATUS))
 		tui_warn("too many arguments specified");
 
 	switch (cmd.type) {
@@ -24,6 +24,8 @@ static void command_server(const cmd_t cmd) {
 
 	case CMD_CONN:			server_connect(addr, port); break;
 	case CMD_DISCONN:		server_disconnect(); break;
+
+	case CMD_STATUS:		server_status(); break;
 
 	case CMD_UNKNOWN:		break;
 

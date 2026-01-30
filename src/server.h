@@ -6,6 +6,8 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#define SERVER_EOF		(-1)
+
 #define SERVER_DEFAULT_ADDR	INADDR_ANY
 #define SERVER_DEFAULT_PORT	9166
 
@@ -36,6 +38,8 @@ void server_unhost(void);
 
 void server_connect(const char *addr, const char *port);
 void server_disconnect(void);
+
+void server_status(void);
 
 #define SERVER_MSG_FMT(uid, msg) \
 	"(user%d): %s", (uid), (msg)

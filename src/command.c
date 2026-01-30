@@ -27,6 +27,8 @@ cmd_t command_parse(char *input) {
 		cmd.type = CMD_CONN;
 	} else if (STREQ(type, "disconnect")) {
 		cmd.type = CMD_DISCONN;
+	} else if (STREQ(type, "status")) {
+		cmd.type = CMD_STATUS;
 	} else if (STREQ(type, "quit")) {
 		cmd.type = CMD_QUIT;
 	} else {

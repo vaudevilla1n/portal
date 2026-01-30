@@ -50,20 +50,48 @@ server_t internal_server;
 network_t server_network;
 
 
+/* str_addr and str_port are ugly names */
+int parse_addr(const char *str_addr, const char *str_port, struct sockaddr_in *addr) {
+	if (!str_addr) {
+		addr->sin_addr.s_addr = SERVER_DEFAULT_ADDR;
+	} else {
+		if (!inet_aton(str_addr, &addr->sin_addr)) {
+			error("invalid address: '%s'", str_addr);
+			return 1;
+		}
+	}
+
+	if (!str_port) {
+		addr->sin_port = htons(SERVER_DEFAULT_PORT);
+	} else {
+		errno = 0;
+		char *end;
+		uint32_t _port = strtoul(str_port, &end, 10);
+
+		if (errno || *end || _port > USHRT_MAX) {
+			error("invalid port: '%s'", str_port);
+			return 1;
+		}
+
+		addr->sin_port = htons((uint16_t)_port);
+	}
+
+	return 0;
+}
+
+static void shutdown_sequence(const int sock) {
+	const char eof = SERVER_EOF;
+	write(sock, &eof, 1);
+	shutdown(sock, SHUT_RDWR);
+	close(sock);
+}
+
+
 static void network_init(void) {
 	server_network.peers[server_network.npeers++] = (struct pollfd) {
 		.fd = internal_server.sock,
 		.events = (POLLIN | POLLOUT),
 	};
-}
-
-static void network_deinit(void) {
-	server_network.peers[0] = (struct pollfd){ 0 };
-	server_network.npeers = 0;
-}
-
-static bool network_poll_event(void) {
-	return poll(server_network.peers, server_network.npeers, 0) > 0;
 }
 
 static int network_add(const int peer) {
@@ -72,15 +100,34 @@ static int network_add(const int peer) {
 
 	server_network.peers[server_network.npeers++] = (struct pollfd) {
 		.fd = peer,
-		.events = (POLLIN | POLLOUT),
+		.events = (POLLIN),
 	};
 	return 0;
 }
 
 static void network_del(const nfds_t pos) {
-	shutdown(server_network.peers[pos].fd, SHUT_RDWR);
-	close(server_network.peers[pos].fd);
+	shutdown_sequence(server_network.peers[pos].fd);
 	server_network.peers[pos].fd = -1;
+}
+
+static void network_deinit(void) {
+	/*
+		forgot that the first peer is the server itself
+		if i shutdown that first i can't send anymore transmissions
+	*/
+	for (nfds_t i = 1; i < server_network.npeers; i++)
+		if (server_network.peers[i].fd > 0)
+			network_del(i);
+	
+	shutdown(server_network.peers[0].fd, SHUT_WR);
+	close(server_network.peers[0].fd);
+
+	server_network.peers[0] = (struct pollfd){ 0 };
+	server_network.npeers = 0;
+}
+
+static bool network_poll_event(void) {
+	return poll(server_network.peers, server_network.npeers, 0) > 0;
 }
 
 static void network_update(void) {
@@ -126,34 +173,29 @@ static void host_distribute_message(const char *msg) {
 		return;
 	}
 
-	if (!network_poll_event()) {
-		error("unable to send message");
-		return;
-	}
-
 	for (nfds_t i = 0; i < server_network.npeers; i++) {
 		const int peer = server_network.peers[i].fd;
-		const short events = server_network.peers[i].revents;
 
-		if (peer == internal_server.sock) {
+		if (peer == internal_server.sock)
 			message(msg);
-		} else if (events & POLLOUT) {
+		else
 			dprintf(peer, "%s", msg);
-		} else {
-			error("unable to send message to peer");
-			network_del(peer);
-		}
 	}
 }
 
-static void host_receive_message(const int peer) {
+static bool host_receive_message(const int peer) {
 	char msg[SERVER_MSG_MAX + 1];
 	const ssize_t len = read(peer, msg, SERVER_MSG_MAX);
+
+	if (len == 1 && msg[0] == SERVER_EOF)
+		return false;
 
 	if (len > 0) {
 		msg[len] = '\0';
 		host_distribute_message(msg);
 	}
+
+	return true;
 }
 
 #define IP_ADDR_MAX	64
@@ -198,47 +240,15 @@ static void host_probe() {
 			network_del(i);
 
 		} else if (events & POLLIN) {
-			host_receive_message(peer);
-			/*
-			const server_msg_t *msg = message_receive(peer);
-
-			if (msg)
-				host_distribute_message(msg->user_id, msg->text, msg->len);
-			*/
+			// EOF received
+			if (!host_receive_message(peer)) {
+				notification("user disconnected (%d)", peer);
+				network_del(i);
+			}
 		}
 	}
 
 	network_update();
-}
-
-
-/* str_addr and str_port are ugly names */
-int parse_addr(const char *str_addr, const char *str_port, struct sockaddr_in *addr) {
-	if (!str_addr) {
-		addr->sin_addr.s_addr = SERVER_DEFAULT_ADDR;
-	} else {
-		if (!inet_aton(str_addr, &addr->sin_addr)) {
-			error("invalid address: '%s'", str_addr);
-			return 1;
-		}
-	}
-
-	if (!str_port) {
-		addr->sin_port = htons(SERVER_DEFAULT_PORT);
-	} else {
-		errno = 0;
-		char *end;
-		uint32_t _port = strtoul(str_port, &end, 10);
-
-		if (errno || *end || _port > USHRT_MAX) {
-			error("invalid port: '%s'", str_port);
-			return 1;
-		}
-
-		addr->sin_port = htons((uint16_t)_port);
-	}
-
-	return 0;
 }
 
 
@@ -303,9 +313,6 @@ void server_unhost(void) {
 
 	notification("unhosting...");
 
-	shutdown(internal_server.sock, SHUT_RDWR);
-	close(internal_server.sock);
-
 	network_deinit();
 
 	internal_server.status = SERVER_IDLE;
@@ -314,22 +321,32 @@ void server_unhost(void) {
 }
 
 
-static void peer_receive_message(void) {
+static bool peer_receive_message(void) {
 	char msg[SERVER_MSG_MAX + 1];
 	const ssize_t len = read(internal_server.sock, msg, SERVER_MSG_MAX);
+
+	if (len == 1 && msg[0] == SERVER_EOF)
+		return false;
 
 	if (len > 0) {
 		msg[len] = '\0';
 		message(msg);
 	}
+
+	return true;
 }
 
 static void peer_probe(void) {
-	if (!network_poll_event())
+	struct pollfd pfd = {
+		.fd = internal_server.sock,
+		.events = (POLLIN),
+	};
+
+	if (!poll(&pfd, 1, 0))
 		return;
 	
 	/* network consists only of the socket to the host */
-	const int events = server_network.peers[0].revents;
+	const int events = pfd.revents;
 	if (events & (POLLERR | POLLHUP)) {
 		notification("server has disconnected");
 		server_disconnect();
@@ -339,7 +356,11 @@ static void peer_probe(void) {
 		server_disconnect();
 
 	} else if (events & (POLLIN)) {
-		peer_receive_message();
+		// EOF received
+		if (!peer_receive_message()) {
+			notification("server has disconnected");
+			server_disconnect();
+		}
 	}
 }
 
@@ -382,8 +403,6 @@ void server_connect(const char *str_addr, const char *str_port) {
 		return;
 	}
 
-	network_init();
-
 	internal_server.status = SERVER_CONNECT;
 
 	notification("successfully connected");
@@ -397,13 +416,22 @@ void server_disconnect(void) {
 
 	notification("disconnecting...");
 
-	shutdown(internal_server.sock, SHUT_RDWR);
-	close(internal_server.sock);
-	
+	shutdown_sequence(internal_server.sock);
 	internal_server.status = SERVER_IDLE;
-	network_deinit();
 
 	notification("successfully disconnected");
+}
+
+
+void server_status(void) {
+	switch (internal_server.status) {
+	case SERVER_DEAD:	notification("server is dead"); break;
+	case SERVER_IDLE:	notification("server is idle"); break;
+	case SERVER_HOST:	notification("currently hosting a server"); break;
+	case SERVER_CONNECT:	notification("currently connected to a server"); break;
+
+	default:	__unreachable("server_status");
+	}
 }
 
 
