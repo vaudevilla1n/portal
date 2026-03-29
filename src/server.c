@@ -163,7 +163,11 @@ void server_init(void) {
 }
 
 
-static void host_distribute_message(const char *msg) {
+static inline bool is_eof_msg(const char *msg, const ptrdiff_t len) {
+	return len == 1 && msg[0] == SERVER_EOF;
+}
+
+static void host_distribute_message(const char *msg, const ptrdiff_t len) {
 	/*
 		network either unitialized (npeers == 0) or has no peers (npeers == 1)
 		just echo the message back to the server
@@ -179,20 +183,20 @@ static void host_distribute_message(const char *msg) {
 		if (peer == internal_server.sock)
 			message(msg);
 		else
-			dprintf(peer, "%s", msg);
+			write(peer, msg, len);
 	}
 }
 
 static bool host_receive_message(const int peer) {
 	char msg[SERVER_MSG_MAX + 1];
-	const ssize_t len = read(peer, msg, SERVER_MSG_MAX);
+	const ptrdiff_t len = read(peer, msg, SERVER_MSG_MAX);
 
-	if (len == 1 && msg[0] == SERVER_EOF)
+	if (is_eof_msg(msg, len))
 		return false;
 
 	if (len > 0) {
 		msg[len] = '\0';
-		host_distribute_message(msg);
+		host_distribute_message(msg, len);
 	}
 
 	return true;
@@ -325,7 +329,7 @@ static bool peer_receive_message(void) {
 	char msg[SERVER_MSG_MAX + 1];
 	const ssize_t len = read(internal_server.sock, msg, SERVER_MSG_MAX);
 
-	if (len == 1 && msg[0] == SERVER_EOF)
+	if (is_eof_msg(msg, len))
 		return false;
 
 	if (len > 0) {
@@ -364,8 +368,8 @@ static void peer_probe(void) {
 	}
 }
 
-static void peer_send_message(const char *msg) {
-	dprintf(internal_server.sock, "%s", msg);
+static void peer_send_message(const char *msg, const ptrdiff_t len) {
+	write(internal_server.sock, msg, len);
 }
 
 void server_connect(const char *str_addr, const char *str_port) {
@@ -441,12 +445,12 @@ void server_status(void) {
 
 void server_send_message(const int user_id, const char *text) {
 	char msg[SERVER_MSG_MAX];
-	snprintf(msg, SERVER_MSG_MAX, SERVER_MSG_FMT(user_id, text));
+	const ptrdiff_t len = snprintf(msg, SERVER_MSG_MAX, SERVER_MSG_FMT(user_id, text));
 
 	switch (internal_server.status) {
 	case SERVER_IDLE:	message(msg); break;
-	case SERVER_HOST:	host_distribute_message(msg); break;
-	case SERVER_CONNECT:	peer_send_message(msg); break;
+	case SERVER_HOST:	host_distribute_message(msg, len); break;
+	case SERVER_CONNECT:	peer_send_message(msg, len); break;
 
 	default:		break;
 	}
@@ -474,5 +478,28 @@ void server_terminate(void) {
 	}
 
 	internal_server.status = SERVER_DEAD;
+}
+
+
+void server_command(const cmd_t cmd) {
+	const char *addr = cmd.argc > 0 ? cmd.argv[0] : nullptr;
+	const char *port = cmd.argc > 1 ? cmd.argv[1] : nullptr;
+
+	if ((addr || port) && (cmd.type == CMD_UNHOST || CMD_DISCONN || CMD_STATUS))
+		tui_warn("too many arguments specified");
+
+	switch (cmd.type) {
+	case CMD_HOST:			server_host(addr, port); break;
+	case CMD_UNHOST:		server_unhost(); break;
+
+	case CMD_CONN:			server_connect(addr, port); break;
+	case CMD_DISCONN:		server_disconnect(); break;
+
+	case CMD_STATUS:		server_status(); break;
+
+	case CMD_UNKNOWN:		break;
+
+	default: __unreachable("main: command");
+	}
 }
 

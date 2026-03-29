@@ -51,17 +51,22 @@ void tui_set_prompt(const int user_id) {
 	tui_prompt_set = true;
 }
 
-static void display_prompt(void) {
+static inline void flush_input_buffer(void) {
+	if (tui_input_buffer.len) {
+		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
+		tui_input_buffer.len = 0;
+
+		fputs(tui_input_buffer.dat, stdout);
+	}
+}
+
+static void display_prompt_line(void) {
 	ansi_move(1, TUI_HEIGHT);
 	ansi_clear_line();
 	ansi_cursor_visible(true);
 
 	printf("%s", tui_prompt);
-
-	if (tui_input_buffer.len) {
-		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
-		fputs(tui_input_buffer.dat, stdout);
-	}
+	flush_input_buffer();
 }
 
 static void display_title(void) {
@@ -175,7 +180,7 @@ void tui_draw(void) {
 	}
 	
 	display_title();
-	display_prompt();
+	display_prompt_line();
 }
 
 void tui_puts(const char *fmt, ...) {
@@ -198,7 +203,7 @@ void tui_puts(const char *fmt, ...) {
 }
 
 
-static const char *read_line(size_t *len) {
+static bool read_line(void) {
 	bool line_read = false;
 	bool reading = true;
 
@@ -242,28 +247,18 @@ static const char *read_line(size_t *len) {
 		}
 	}
 
-	if (line_read) {
-		if (len)
-			*len = tui_input_buffer.len;
-
-		tui_input_buffer.dat[tui_input_buffer.len] = '\0';
-		tui_input_buffer.len = 0;
-
-		return tui_input_buffer.dat;
-	} else {
-		if (len)
-			*len = 0;
-
-		return nullptr;
-	}
+	return line_read;
 }
 
-char *tui_repl(size_t *len) {
-	const char *input = read_line(len);
+ptrdiff_t tui_read_line(char *buf, const ptrdiff_t cap) {
+	if (!read_line())
+		return 0;
 
-	if (!input)
-		return nullptr;
+	const ptrdiff_t len = MIN(cap, tui_input_buffer.len);
+	memcpy(buf, tui_input_buffer.dat, len);
+	buf[len] = '\0';
 
-	display_prompt();
-	return xstrdup(input);
+	display_prompt_line();
+
+	return len;
 }

@@ -29,4 +29,4 @@ void tui_puts(const char *fmt, ...);
 #define tui_info(fmt, ...)	\
 	tui_puts(ANSI_BOLD "(portal) " fmt ANSI_RESET __VA_OPT__(,)__VA_ARGS__)
 
-char *tui_repl(size_t *len);
+ptrdiff_t tui_read_line(char *buf, const ptrdiff_t cap);

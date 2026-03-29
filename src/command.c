@@ -7,8 +7,8 @@
 
 #define WHITESPACE	" \b\t\n"
 
-bool is_command(const char *input) {
-	return input[0] == '\\' && input[1] != '\\';
+bool is_command(const char *input, const ptrdiff_t len) {
+	return len > 1 && input[0] == '\\' && input[1] != '\\';
 }
 
 cmd_t command_parse(char *input) {

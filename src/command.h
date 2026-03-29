@@ -26,6 +26,6 @@ typedef struct {
 	const char *argv[CMD_ARGC_MAX];
 } cmd_t;
 
-bool is_command(const char *input);
+bool is_command(const char *input, const ptrdiff_t len);
 
 cmd_t command_parse(char *input);

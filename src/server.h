@@ -1,12 +1,13 @@
 #pragma once
 
 #include "common.h"
+#include "command.h"
 
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-#define SERVER_EOF		(-1)
+#define SERVER_EOF		((char)(0xff))
 
 #define SERVER_DEFAULT_ADDR	INADDR_ANY
 #define SERVER_DEFAULT_PORT	9166
@@ -46,5 +47,6 @@ void server_status(void);
 void server_send_message(const int userid, const char *text);
 
 void server_iteration(void);
+void server_command(const cmd_t cmd);
 
 void server_terminate(void);

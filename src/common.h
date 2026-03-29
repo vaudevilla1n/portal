@@ -29,7 +29,7 @@
 #define unused(x)	(void)(x)
 
 #define assert_ptr(p, func)	\
-	((p) ? (p) : (perror(func), abort(), nullptr))
+	({ void *t = (p); if (!t) {perror(func); abort();} p})
 
 #define xmalloc(n, size)		assert_ptr(malloc((size)), "malloc")
 #define xcalloc(n, size)		assert_ptr(calloc((n), (size)), "calloc")
